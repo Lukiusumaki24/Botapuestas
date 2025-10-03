@@ -23,39 +23,70 @@ def fetch_today_from_api(cfg):
     comps = api.get("competitions", ["PL","PD","SA","BL1","FL1","DED","PPL"])
     if not token:
         return None, None, None
+
+    import math
+    from datetime import timedelta
     API_BASE = "https://api.football-data.org/v4"
     headers = {"X-Auth-Token": token}
 
-    today = datetime.now(TZ).date().isoformat()
-    start = (datetime.now(TZ).date() - timedelta(days=180)).isoformat()
+    today = datetime.now(TZ).date()
+    start = today - timedelta(days=180)
+
     hist_rows, up_rows = [], []
+    window = timedelta(days=9)  # <= 10 días por ventana
 
     for comp in comps:
-        m1 = api_get(f"{API_BASE}/competitions/{comp}/matches", headers, {"dateFrom": start, "dateTo": today})
-        for m in m1.get("matches", []):
-            if m.get("status") != "FINISHED": continue
-            sc = (m.get("score",{}) or {}).get("fullTime",{})
-            hist_rows.append({
-                "date": m.get("utcDate","")[:10],
-                "league": m.get("competition",{}).get("name", comp),
-                "home": m.get("homeTeam",{}).get("name"),
-                "away": m.get("awayTeam",{}).get("name"),
-                "home_goals": sc.get("home", None),
-                "away_goals": sc.get("away", None),
-                "home_corners": None, "away_corners": None
-            })
-        m2 = api_get(f"{API_BASE}/competitions/{comp}/matches", headers, {"dateFrom": today, "dateTo": today})
-        for m in m2.get("matches", []):
-            if m.get("status") not in ("TIMED","SCHEDULED"): continue
-            up_rows.append({
-                "date": m.get("utcDate","")[:10],
-                "league": m.get("competition",{}).get("name", comp),
-                "home": m.get("homeTeam",{}).get("name"),
-                "away": m.get("awayTeam",{}).get("name"),
-                "home_odds": None, "draw_odds": None, "away_odds": None,
-                "ou25_over_odds": None, "ou25_under_odds": None
-            })
+        # 1) Histórico en ventanas de 10 días
+        d = start
+        while d <= today:
+            to = min(d + window, today)
+            try:
+                m = api_get(
+                    f"{API_BASE}/competitions/{comp}/matches",
+                    headers,
+                    {"dateFrom": d.isoformat(), "dateTo": to.isoformat()},
+                )
+                for match in m.get("matches", []):
+                    if match.get("status") != "FINISHED":
+                        continue
+                    sc = (match.get("score", {}) or {}).get("fullTime", {})
+                    hist_rows.append({
+                        "date": (match.get("utcDate","")[:10]),
+                        "league": m.get("competition",{}).get("name", comp),
+                        "home": match.get("homeTeam",{}).get("name"),
+                        "away": match.get("awayTeam",{}).get("name"),
+                        "home_goals": sc.get("home", None),
+                        "away_goals": sc.get("away", None),
+                        "home_corners": None, "away_corners": None,
+                    })
+            except Exception as e:
+                # Si una ventana falla, seguimos con la siguiente para no romper todo
+                pass
+            d = to + timedelta(days=1)
+
+        # 2) Partidos de HOY (TIMED/SCHEDULED)
+        try:
+            up = api_get(
+                f"{API_BASE}/competitions/{comp}/matches",
+                headers,
+                {"dateFrom": today.isoformat(), "dateTo": today.isoformat()},
+            )
+            for match in up.get("matches", []):
+                if match.get("status") not in ("TIMED", "SCHEDULED"):
+                    continue
+                up_rows.append({
+                    "date": (match.get("utcDate","")[:10]),
+                    "league": up.get("competition",{}).get("name", comp),
+                    "home": match.get("homeTeam",{}).get("name"),
+                    "away": match.get("awayTeam",{}).get("name"),
+                    "home_odds": None, "draw_odds": None, "away_odds": None,
+                    "ou25_over_odds": None, "ou25_under_odds": None,
+                })
+        except Exception:
+            pass
+
     return pd.DataFrame(hist_rows), pd.DataFrame(up_rows), pd.DataFrame()
+
 
 def recent_form(df_hist, team, N=6):
     h = df_hist[df_hist['home']==team].sort_values('date').tail(N)
