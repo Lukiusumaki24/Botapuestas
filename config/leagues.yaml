@@ -1,3 +1,30 @@
 league_patterns:
+  # Europa (top ligas y comunes)
   - Premier League
   - La Liga
+  - Serie A
+  - Bundesliga
+  - Ligue 1
+  - Eredivisie
+  - Primeira Liga
+  - Scottish Premiership
+  - Super Lig
+  - Belgian Pro League
+  - Greek Super League
+  - Swiss Super League
+  - Austrian Bundesliga
+  - Danish Superliga
+  - Norwegian Eliteserien
+  - Swedish Allsvenskan
+  - Czech First League
+  - Polish Ekstraklasa
+  # Colombia
+  - Liga BetPlay
+  - Primera A
+  - Categoría Primera A
+  # Conmebol
+  - Copa Libertadores
+  - Copa Sudamericana
+  # USA
+  - MLS
+  - Major League Soccer
