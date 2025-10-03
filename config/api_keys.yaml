@@ -1,9 +1,9 @@
 football_data_org:
-  api_key: "PON_TU_TOKEN_DE_FOOTBALL_DATA_ORG"
+  api_key: "b2d023762a0b4779a2cd0cbeedb19065"
   competitions: ["PL","PD","SA","BL1","FL1","DED","PPL"]
 
 the_odds_api:
-  api_key: "PON_TU_API_KEY_DE_THE_ODDS_API"
+  api_key: "627daa563fac7747f4ed83a8d86ace6d"
   base_url: "https://api.the-odds-api.com/v4"
 
 api_football:
