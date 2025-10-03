@@ -54,14 +54,13 @@ def main():
     port = int(os.environ.get("PORT", "10000"))
     external = os.environ.get("WEBHOOK_URL") or os.environ.get("RENDER_EXTERNAL_URL")
     if not external:
-        raise SystemExit("Falta WEBHOOK_URL o RENDER_EXTERNAL_URL (Render la expone automáticamente).")
-    webhook_path = "/webhook"
-
+        raise SystemExit("Falta WEBHOOK_URL o RENDER_EXTERNAL_URL")
+    # En PTB v21 se usa url_path
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
-        webhook_url=f"{external.rstrip('/')}{webhook_path}",
-        webhook_path=webhook_path,
+        url_path="webhook",
+        webhook_url=f"{external.rstrip('/')}/webhook",
         drop_pending_updates=True,
     )
 
