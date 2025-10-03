@@ -1,5 +1,5 @@
 football_data_org:
-  api_key: "b2d023762a0b4779a2cd0cbeedb19065"
+  api_key: ""
   competitions: ["PL","PD","SA","BL1","FL1","DED","PPL"]
 
 the_odds_api:
