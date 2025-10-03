@@ -35,11 +35,19 @@ def format_reply(date_str: str, results: list) -> str:
     return "\n".join(lines)
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.message.text or ""
-    cfg = load_config()
-    date_str, res = analyze_today(q, cfg, hist_csv="data/matches_hist.csv", up_csv="data/upcoming.csv")
-    reply = format_reply(date_str, res)
-    await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN)
+    try:
+        q = update.message.text or ""
+        cfg = load_config()
+        date_str, res = analyze_today(q, cfg, hist_csv="data/matches_hist.csv", up_csv="data/upcoming.csv")
+        reply = format_reply(date_str, res)
+        await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        await update.message.reply_text("Hubo un problema consultando datos. Intento con CSVs locales...")
+        # Reintento con CSVs forzado:
+        from datetime import datetime
+        date_str, res = analyze_today(q, {}, hist_csv="data/matches_hist.csv", up_csv="data/upcoming.csv")
+        await update.message.reply_text(format_reply(date_str, res), parse_mode=ParseMode.MARKDOWN)
+
 
 def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
