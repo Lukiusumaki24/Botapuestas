@@ -49,4 +49,3 @@ if __name__ == "__main__":
     up.to_csv(args.upcoming_out, index=False)
     print(f"Histórico: {len(hist)} filas -> {args.hist_out}")
     print(f"Próximos: {len(up)} filas -> {args.upcoming_out}")
-print('fetch fixtures API-Football placeholder')
