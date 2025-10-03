@@ -1,54 +1,80 @@
-import os, logging, pytz, re
+import argparse, re, pandas as pd, numpy as np
 from datetime import datetime, timedelta
-from telegram import Update
-from telegram.constants import ParseMode
-from telegram.ext import Application, MessageHandler, CommandHandler, ContextTypes, filters
-from ask import analyze_today, load_config
+import pytz
+from elo import build_elo
+from poisson import match_score_matrix, probs_1x2_from_matrix, prob_over_from_matrix
+from odds import implied_prob_from_decimal, remove_overround, kelly_fraction
 
 TZ = pytz.timezone("America/Bogota")
-HELP_TEXT = (
-    "Hola 👋 Soy tu bot de pronósticos.\n\n"
-    "Pregúntame:\n"
-    "• apuestas para hoy\n"
-    "• apuestas para mañana\n"
-    "• apuestas para 05/10\n\n"
-    "Yo haré el estudio (forma, H2H, localía, lesiones* si hay, sorpresa, goles y corners).\n"
-    "Salida: 1X2, Doble Oportunidad, Over/Under 2.5, Corners >9.5, prob. de upset.\n"
-    "*Lesiones dependen de la API configurada."
-)
 
-def format_reply(date_str: str, results: list) -> str:
-    if not results:
-        return f"No encontré partidos para {date_str}."
-    lines = [f"*Estudio de partidos para {date_str}* (America/Bogota)"]
-    for r in results[:20]:
-        lines.append(
-            f"\n*{r.get('league','')}*: {r['match']}\n"
-            f"• 1X2: Local *{r['p_home']}*, Empate *{r['p_draw']}*, Visita *{r['p_away']}*\n"
-            f"• Doble Oportunidad: *{r['double_chance_best']['market']}* (p≈{r['double_chance_best']['p']})\n"
-            f"• Goles: Over2.5 p≈{r['p_over25']} | Corners>9.5 p≈{r['p_corners_over95']} | Upset p≈{r['p_upset']}\n"
-        )
-    if len(results) > 20:
-        lines.append(f"\n… y {len(results)-20} partidos más.")
-    return "\n".join(lines)
+def parse_date_from_query(q):
+    q = q.lower()
+    today = datetime.now(TZ).date()
+    if "hoy" in q: return today
+    if "mañana" in q: return today + timedelta(days=1)
+    m = re.search(r"(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?", q)
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), m.group(3)
+        y = int(y) if y else today.year
+        if y < 100: y += 2000
+        return datetime(y, mo, d, tzinfo=TZ).date()
+    return today
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(HELP_TEXT)
+def recent_form(df_hist, N=6):
+    form = {}
+    teams = set(df_hist['home']).union(set(df_hist['away']))
+    for t in teams:
+        rows_h = df_hist[df_hist['home']==t].sort_values('date').tail(N)
+        rows_a = df_hist[df_hist['away']==t].sort_values('date').tail(N)
+        gf = rows_h['home_goals'].sum() + rows_a['away_goals'].sum()
+        ga = rows_h['away_goals'].sum() + rows_a['home_goals'].sum()
+        games = len(rows_h)+len(rows_a)
+        val = (gf - ga)/max(1, games)
+        form[(t,'F')] = val
+    return form
 
-async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.message.text or ""
-    cfg = load_config()
-    date_str, res = analyze_today(q, cfg, hist_csv="data/matches_hist.csv", up_csv="data/upcoming.csv")
-    reply = format_reply(date_str, res)
-    await update.message.reply_text(reply, parse_mode=ParseMode.MARKDOWN)
+def estimate_goal_rates(row, rating, form_tbl, base_lambda=1.35, beta_elo=0.0035, beta_form=0.08, home_bias=0.15):
+    Rh = rating.get(row['home'],1500)
+    Ra = rating.get(row['away'],1500)
+    elo_diff = (Rh - Ra)/100.0
+    form_h = form_tbl.get((row['home'],'F'),0.0)
+    form_a = form_tbl.get((row['away'],'F'),0.0)
+    lam_h = max(0.05, base_lambda * np.exp(beta_elo*elo_diff + beta_form*form_h + home_bias))
+    lam_a = max(0.05, base_lambda * np.exp(-beta_elo*elo_diff + beta_form*form_a))
+    return lam_h, lam_a
+
+def double_chance_probs(pH, pD, pA):
+    return {"1X": pH + pD, "12": pH + pA, "X2": pD + pA}
+
+def main(args):
+    target_date = parse_date_from_query(args.question)
+    hist = pd.read_csv(args.hist, parse_dates=['date'])
+    upcoming = pd.read_csv(args.upcoming, parse_dates=['date'])
+
+    up = upcoming[upcoming['date'].dt.date == target_date].copy()
+    if len(up)==0:
+        print(f"No hay partidos para {target_date.isoformat()}.")
+        return
+
+    elo = build_elo(hist)
+    form_tbl = recent_form(hist, N=6)
+
+    for _, row in up.iterrows():
+        lam_h, lam_a = estimate_goal_rates(row, elo, form_tbl)
+        M = match_score_matrix(lam_h, lam_a, max_goals=8)
+        pH, pD, pA = probs_1x2_from_matrix(M)
+        pOver25 = prob_over_from_matrix(M, 2.5)
+        dc = double_chance_probs(pH,pD,pA)
+        best_dc = max(dc.items(), key=lambda x: x[1])
+        print(f"- {row.get('league','')}: {row['home']} vs {row['away']}")
+        print(f"  ▸ 1X2: Local {pH:.3f}, Empate {pD:.3f}, Visita {pA:.3f}")
+        print(f"  ▸ Doble Oportunidad: {best_dc[0]} (p≈{best_dc[1]:.3f})")
+        print(f"  ▸ Goles: Over 2.5 p≈{pOver25:.3f}")
 
 if __name__ == "__main__":
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if not token:
-        raise SystemExit("Falta TELEGRAM_BOT_TOKEN en variables de entorno.")
-    logging.basicConfig(level=logging.INFO)
-    app = Application.builder().token(token).build()
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
-    app.run_polling()
-print('Use chatbot.py in full build')
+    p = argparse.ArgumentParser()
+    p.add_argument("question", help="Ej: 'qué apuestas hay para hoy?'")
+    p.add_argument("--hist", default="data/matches_hist.csv")
+    p.add_argument("--upcoming", default="data/upcoming.csv")
+    args = p.parse_args()
+    main(args)
