@@ -1,0 +1,1 @@
+print('fetch odds placeholder')
